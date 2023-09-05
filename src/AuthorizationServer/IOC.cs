@@ -1,6 +1,8 @@
-﻿using AuthorizationServer.Data;
+﻿using AuthorizationServer.Core.OpenID;
+using AuthorizationServer.Data;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Net.Http.Headers;
 using Microsoft.OpenApi.Models;
 using Serilog;
 
@@ -10,25 +12,68 @@ namespace AuthorizationServer
     {
         public static IServiceCollection RegisterServices(this IServiceCollection services, IConfiguration configuration)
         {
-            services.AddDbContext<ApplicationDbContext>(option =>
+            services.AddDbContext<ApplicationDbContext>(options =>
             {
-                option.UseSqlServer(configuration.GetConnectionString("Default"));
+                options.UseSqlServer(configuration.GetConnectionString("Default"));
+
+                // Register the entity sets needed by OpenIddict.
+                // Note: use the generic overload if you need
+                // to replace the default OpenIddict entities.
+                options.UseOpenIddict();
             });
 
             services.AddDatabaseDeveloperPageExceptionFilter();
 
             services.AddTransient<DbContext, ApplicationDbContext>();
 
-            services.AddDefaultIdentity<IdentityUser>(options => options.SignIn.RequireConfirmedAccount = true)
-                .AddEntityFrameworkStores<ApplicationDbContext>();
+            services.AddDefaultIdentity<IdentityUser>()
+                .AddEntityFrameworkStores<ApplicationDbContext>()
+                .AddDefaultTokenProviders()
+                .AddDefaultUI();
 
-            services.AddSwaggerGen(c =>
+            services.AddDefaultOpenId<ApplicationDbContext>();
+
+            services.AddSwaggerGen(options =>
             {
-                c.SwaggerDoc("v1", new OpenApiInfo { Title = "OpenID Server", Version = "v1" });
+                options.SwaggerDoc("v1", new OpenApiInfo { Title = "OpenID Server", Version = "v1" });
+
+                options.AddSecurityDefinition("Authentication", new OpenApiSecurityScheme
+                {
+                    Type = SecuritySchemeType.OpenIdConnect,
+                    Description = "Description",
+                    In = ParameterLocation.Header,
+                    Name = HeaderNames.Authorization,
+                    Flows = new OpenApiOAuthFlows
+                    {
+                        ClientCredentials = new OpenApiOAuthFlow
+                        {
+                            AuthorizationUrl = new Uri("/connect/token", UriKind.Relative),
+                            TokenUrl = new Uri("/connect/token", UriKind.Relative)
+                        }
+                    },
+                    OpenIdConnectUrl = new Uri("/.well-known/openid-configuration", UriKind.Relative)
+                });
+
+                options.AddSecurityRequirement(
+                                    new OpenApiSecurityRequirement
+                                    {
+                            {
+                                new OpenApiSecurityScheme
+                                {
+                                    Reference = new OpenApiReference
+                                        { Type = ReferenceType.SecurityScheme, Id = "oauth" },
+                                },
+                                Array.Empty<string>()
+                            }
+                                    }
+                                );
             });
 
+          
 
             services.AddRazorPages();
+
+            services.AddHostedService<Worker>();
 
             return services;
         }
@@ -64,6 +109,8 @@ namespace AuthorizationServer
             app.UseAuthorization();
 
             app.MapRazorPages();
+
+            
 
             return app;
         }
